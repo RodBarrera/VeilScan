@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "veilscan"
+version = "0.5.0"
+description = "Detector de inyeccion de prompt oculta en documentos (PDF, DOCX, XLSX, PPTX)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Jorge Barrera Espinoza" }]
+keywords = ["security", "prompt-injection", "llm-security", "document-analysis", "blue-team"]
+dependencies = [
+    "pymupdf>=1.24",
+    "pdfplumber>=0.11",
+    "pikepdf>=8.0",
+    "lxml>=5.0",
+    "openpyxl>=3.1",
+    "python-pptx>=0.6.23",
+    "typer>=0.12",
+    "rich>=13.0",
+    "jinja2>=3.1",
+    "reportlab>=4.0",
+    "confusable-homoglyphs>=3.3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+llm = ["anthropic>=0.40", "python-dotenv>=1.0"]
+
+[project.scripts]
+veilscan = "veilscan.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["veilscan*"]

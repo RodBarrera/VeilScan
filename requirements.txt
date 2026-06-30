@@ -1,0 +1,11 @@
+pymupdf>=1.24
+pdfplumber>=0.11
+pikepdf>=8.0
+lxml>=5.0
+openpyxl>=3.1
+python-pptx>=0.6.23
+typer>=0.12
+rich>=13.0
+jinja2>=3.1
+reportlab>=4.0
+confusable-homoglyphs>=3.3

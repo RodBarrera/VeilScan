@@ -1,0 +1,21 @@
+# Entorno y secretos
+.env
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+
+# Reportes y fixtures generados
+tests/fixtures/*.pdf
+tests/fixtures/*.docx
+tests/fixtures/*.xlsx
+tests/fixtures/*.pptx
+*.html
+*.pdf
+!docs/*.html
