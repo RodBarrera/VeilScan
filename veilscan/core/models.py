@@ -72,6 +72,7 @@ class Technique(str, Enum):
     TOOL_ABUSE = "VEIL-T007: Invocacion de herramientas / accion no solicitada"
     ACTIVE_CONTENT = "VEIL-T008: Contenido activo (JavaScript embebido)"
     METADATA_INJECTION = "VEIL-T009: Inyeccion via metadatos"
+    EXTENSION_SPOOFING = "VEIL-T010: Spoofing de extension (firma binaria no coincide)"
 
 
 @dataclass

@@ -237,3 +237,52 @@ def test_mitre_cli_command_runs():
     result = CliRunner().invoke(app, ["mitre"])
     assert result.exit_code == 0
     assert "T1027" in result.stdout
+
+
+# ----------------------- magic number / spoofing de extension ----------------------- #
+def test_magic_check_matches_for_benign_pdf():
+    from veilscan.core import magic
+
+    r = magic.check(os.path.join(FIX, "benign.pdf"), ".pdf")
+    assert r.matches is True
+    assert r.real_kind == "pdf"
+
+
+def test_magic_check_detects_ooxml_subtype_mismatch():
+    """Un .docx real, renombrado a .pdf, debe detectarse por su firma ZIP+word/."""
+    from veilscan.core import magic
+
+    r = magic.check(os.path.join(FIX, "benign.docx"), ".pdf")
+    assert r.matches is False
+    assert r.real_kind == "docx"
+    assert r.declared_kind == "pdf"
+
+
+def test_scan_file_detects_extension_spoofing_and_still_extracts(tmp_path):
+    """Un .docx renombrado a .pdf: VeilScan debe marcarlo CRITICAL pero igual
+    extraerlo con el extractor correcto (contenido real), no rendirse."""
+    import shutil
+
+    fake = tmp_path / "cv.pdf"
+    shutil.copyfile(os.path.join(FIX, "injected.docx"), fake)
+
+    r = scanner.scan_file(str(fake))
+    assert r.error is None
+    techniques = {f.technique.name for f in r.findings}
+    assert "EXTENSION_SPOOFING" in techniques
+    spoof = next(f for f in r.findings if f.technique.name == "EXTENSION_SPOOFING")
+    assert spoof.severity.value == "CRITICAL"
+    assert spoof.mitre[0].id == "T1036.008"
+    # el contenido real (docx con w:vanish) se siguio analizando con normalidad
+    assert any(f.hidden for f in r.findings)
+
+
+def test_scan_file_unknown_signature_reports_error(tmp_path):
+    """Bytes que no son ni PDF ni ZIP, con extension .pdf: no hay como extraer con seguridad."""
+    fake = tmp_path / "malware.pdf"
+    fake.write_bytes(b"MZ\x90\x00\x03\x00\x00\x00this is not a real pdf")
+
+    r = scanner.scan_file(str(fake))
+    assert r.error is not None
+    techniques = {f.technique.name for f in r.findings}
+    assert "EXTENSION_SPOOFING" in techniques

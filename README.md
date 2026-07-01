@@ -37,7 +37,7 @@ Leyenda: ✅ Listo · 🚧 En progreso · ⬜ Pendiente
 | Componente | Descripción | Fase | Estado |
 |---|---|:---:|:---:|
 | Modelo de datos | `Finding`, `TextSpan`, `ScanResult`, risk score ponderado | 1 | ✅ |
-| CLI (`typer`) | `scan` / `sanitize` / `formats`, flags `--json` `--html` `--fail-on` | 1 | ✅ |
+| CLI (`typer`) | `scan` / `sanitize` / `formats` / `mitre`, flags `--json` `--html` `--fail-on` | 1 | ✅ |
 | Extractor **PDF** | texto casi blanco, fuente diminuta, off-page, `3 Tr`, OCG, JS, metadatos | 1 | ✅ |
 | Extractor **DOCX** | `w:vanish`, color blanco, `w:sz`, comentarios, metadatos, alt-text | 1 | ✅ |
 | Detector de divergencia | brecha vista-humano vs vista-IA | 1 | ✅ |
@@ -51,7 +51,7 @@ Leyenda: ✅ Listo · 🚧 En progreso · ⬜ Pendiente
 | Extractor **XLSX** | hojas `veryHidden`, filas/cols ocultas, fuente blanca, formato `;;;`, comentarios, metadatos | 2 | ✅ |
 | Extractor **PPTX** | shapes fuera del slide, slides ocultos, notas del orador, fuente diminuta/blanca, alt-text | 2 | ✅ |
 | Sanitización profunda | eliminar runs ocultos, capas OCG, normalizar Unicode, reescritura | 2 | ⬜ |
-| Validación magic-number / MIME | detectar spoofing de extensión antes de parsear | 2 | ⬜ |
+| Validación magic-number / MIME | detectar spoofing de extensión antes de parsear (`veilscan/core/magic.py`) | 2 | ✅ |
 | Capa "juez LLM" (opcional) | usa la API de Anthropic para explicar qué dice el texto oculto, construida defensivamente | 2 | ✅ |
 | Atribución de `3 Tr` | mini-parser de content stream para extraer el texto invisible exacto | 2 | ⬜ |
 | Mapeo formal a MITRE ATT&CK | etiquetar cada hallazgo con su técnica oficial (crosswalk `veilscan/core/mitre.py`) | 2 | ✅ |
@@ -112,6 +112,28 @@ veilscan sanitize sucio.pdf --out limpio.pdf
 # ver el crosswalk completo VEIL-TXXX -> MITRE ATT&CK
 veilscan mitre
 ```
+
+### Validación de magic-number (spoofing de extensión)
+
+Antes de elegir cómo parsear un archivo, `scan` compara la extensión del
+nombre contra la firma binaria real del contenido (ver
+[`veilscan/core/magic.py`](veilscan/core/magic.py)). Esto detecta el truco de
+renombrar un archivo para pasar filtros o engañar a un pipeline automatizado
+— por ejemplo, un `.docx` con una macro renombrado a `informe.pdf`:
+
+```bash
+mv sospechoso.docx informe.pdf
+veilscan scan informe.pdf
+# -> VEIL-T010 (CRITICAL): la extension declarada no coincide con la firma binaria
+#    y VeilScan sigue analizando el contenido real (docx), no el nombre.
+```
+
+Si la firma no coincide pero el contenido real es uno de los 4 formatos
+soportados, VeilScan **sigue extrayendo con el extractor correcto** (más útil
+que rendirse) y además deja el hallazgo `VEIL-T010` como evidencia del
+disfraz. Si la firma no corresponde a nada reconocible (un ejecutable, una
+imagen, un archivo corrupto), el escaneo se detiene con un error explícito en
+vez de arriesgarse a parsear basura.
 
 ### Juez LLM (opcional)
 
@@ -174,6 +196,7 @@ VeilScan usa una taxonomía propia (con guiño a MITRE ATT&CK donde aplica):
 | VEIL-T007 | Invocación de herramientas / acción no solicitada |
 | VEIL-T008 | Contenido activo (JavaScript embebido) |
 | VEIL-T009 | Inyección vía metadatos |
+| VEIL-T010 | Spoofing de extensión (firma binaria no coincide) |
 
 ### Crosswalk a MITRE ATT&CK
 

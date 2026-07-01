@@ -15,7 +15,8 @@ from __future__ import annotations
 
 import os
 
-from veilscan.core.models import Finding, ScanResult
+from veilscan.core import magic
+from veilscan.core.models import Finding, ScanResult, Severity, Technique
 from veilscan.detectors import divergence, patterns, unicode_layer
 from veilscan.extractors.base import BaseExtractor
 from veilscan.extractors.docx import DocxExtractor
@@ -30,6 +31,13 @@ _EXTRACTORS: list[BaseExtractor] = [
     XlsxExtractor(),
     PptxExtractor(),
 ]
+
+# Mismo registro, pero indexado por "familia" (pdf/docx/xlsx/pptx) en vez de
+# por extension. Lo usa la validacion de magic number para elegir el
+# extractor correcto segun el CONTENIDO real del archivo, no segun su nombre.
+_EXTRACTOR_BY_KIND: dict[str, BaseExtractor] = {
+    ex.extensions[0].lstrip("."): ex for ex in _EXTRACTORS
+}
 
 
 def _pick_extractor(path: str) -> BaseExtractor | None:
@@ -60,13 +68,42 @@ def scan_file(path: str, use_llm: bool = False, llm_model: str | None = None) ->
         result.error = "El archivo no existe."
         return result
 
+    # 0) magic number: la extension del nombre de archivo es solo una etiqueta;
+    #    esto verifica que el CONTENIDO real coincida con lo que dice el nombre.
+    mcheck = magic.check(path, ext)
+    spoof_finding: Finding | None = None
+    if not mcheck.matches:
+        spoof_finding = Finding(
+            technique=Technique.EXTENSION_SPOOFING,
+            severity=Severity.CRITICAL,
+            title="La extension declarada no coincide con el contenido real del archivo",
+            location="file",
+            evidence=f"nombre: *{mcheck.declared_ext}  |  firma binaria real: {mcheck.real_kind or 'desconocida'}",
+            detail=mcheck.detail,
+        )
+        # Si el contenido real es un formato que SI sabemos procesar, seguimos
+        # el escaneo con el extractor correcto (mas robusto que rendirse), pero
+        # el hallazgo CRITICAL queda igual: el intento de disfraz es la senal.
+        if mcheck.real_kind in _EXTRACTOR_BY_KIND:
+            extractor = _EXTRACTOR_BY_KIND[mcheck.real_kind]
+        else:
+            # firma desconocida o zip sin subtipo Office: no hay como extraer con seguridad
+            result.error = mcheck.detail
+            result.add(spoof_finding)
+            return result
+
     try:
         extraction = extractor.extract(path)
     except Exception as exc:  # extraccion robusta: un PDF roto no debe tumbar el scan
         result.error = f"Error al extraer: {exc}"
+        if spoof_finding is not None:
+            result.add(spoof_finding)
         return result
 
     result.metadata = extraction.metadata
+
+    if spoof_finding is not None:
+        result.add(spoof_finding)
 
     # 1) hallazgos estructurales del extractor
     for f in extraction.structural_findings:

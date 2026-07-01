@@ -123,6 +123,13 @@ _CROSSWALK: dict[Technique, list[MitreTechnique]] = {
             "Los metadatos son un canal que casi nadie inspecciona: "
             "esconder ahi el payload es ofuscacion por ubicacion."),
     ],
+    Technique.EXTENSION_SPOOFING: [
+        MitreTechnique(
+            "T1036.008", "Masquerading: Masquerade File Type",
+            "Defense Evasion", "direct",
+            "Corresponde exactamente: la extension declarada no coincide con "
+            "el tipo real de archivo revelado por su firma binaria."),
+    ],
 }
 
 
