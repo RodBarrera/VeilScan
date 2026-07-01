@@ -30,6 +30,10 @@ _TEMPLATE = Template("""<!DOCTYPE html>
   .s-CRITICAL{background:var(--crit);} .s-HIGH{background:var(--high);}
   .s-MEDIUM{background:var(--med);color:#1a1a1a;} .s-LOW{background:var(--low);} .s-INFO{background:#555;}
   code{background:#1a1f2b;padding:2px 6px;border-radius:4px;font-size:13px;color:#9ecbff;word-break:break-all;}
+  .mitre{display:inline-block;font-family:monospace;font-size:12px;font-weight:700;color:#9ecbff;
+         background:#1a1f2b;padding:2px 7px;border-radius:4px;text-decoration:none;white-space:nowrap;}
+  .mitre:hover{background:#26314a;}
+  .mitre-analog{color:#f9a825;}
   .clean{color:var(--clean);font-size:16px;padding:20px 0;}
   .llm{background:#161b26;border:1px solid #2a3550;border-radius:8px;padding:16px 18px;margin-bottom:22px;}
   .llm-head{font-size:13px;color:#b08cff;font-weight:700;margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px;}
@@ -63,19 +67,27 @@ _TEMPLATE = Template("""<!DOCTYPE html>
 {% endif %}
 {% if findings %}
   <table>
-    <thead><tr><th>#</th><th>Sev</th><th>Tecnica</th><th>Ubicacion</th><th>Hallazgo / Evidencia</th></tr></thead>
+    <thead><tr><th>#</th><th>Sev</th><th>Tecnica</th><th>ATT&amp;CK</th><th>Ubicacion</th><th>Hallazgo / Evidencia</th></tr></thead>
     <tbody>
     {% for f in findings %}
       <tr>
         <td>{{ loop.index }}</td>
         <td><span class="sev s-{{ f.sev }}">{{ f.sev }}</span></td>
         <td>{{ f.tech }}</td>
+        <td>
+          {% if f.mitre %}
+            <a href="{{ f.mitre.url }}" target="_blank" rel="noopener" class="mitre{% if f.mitre.confidence != 'direct' %} mitre-analog{% endif %}" title="{{ f.mitre.name }} ({{ f.mitre.tactic }}){% if f.mitre.confidence != 'direct' %} — mapeo analogo{% endif %}">{{ f.mitre.id }}{% if f.mitre.confidence != 'direct' %}~{% endif %}</a>
+          {% else %}
+            <span class="sub">—</span>
+          {% endif %}
+        </td>
         <td>{{ f.loc }}</td>
         <td><strong>{{ f.title }}</strong><br><code>{{ f.evidence }}</code><br><span class="sub">{{ f.detail }}</span></td>
       </tr>
     {% endfor %}
     </tbody>
   </table>
+  <div class="sub" style="margin-top:8px">ATT&amp;CK: id sin marca = correspondencia directa · id con ~ = mapeo analogo (sin equivalente exacto en ATT&amp;CK Enterprise)</div>
 {% else %}
   <div class="clean">✓ Sin hallazgos. Documento limpio.</div>
 {% endif %}
@@ -93,6 +105,16 @@ def render(result: ScanResult) -> str:
             "title": html.escape(f.title),
             "evidence": html.escape(f.evidence_preview(400)),
             "detail": html.escape(f.detail),
+            "mitre": (
+                {
+                    "id": html.escape(f.mitre[0].id),
+                    "name": html.escape(f.mitre[0].name),
+                    "tactic": html.escape(f.mitre[0].tactic),
+                    "confidence": f.mitre[0].confidence,
+                    "url": html.escape(f.mitre[0].url),
+                }
+                if f.mitre else None
+            ),
         }
         for f in sorted(result.findings, key=lambda x: -x.severity.weight)
     ]

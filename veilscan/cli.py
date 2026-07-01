@@ -126,6 +126,39 @@ def formats():
     console.print("Formatos soportados:", ", ".join(scanner.supported_extensions()))
 
 
+@app.command()
+def mitre():
+    """Muestra el crosswalk completo VEIL-TXXX -> MITRE ATT&CK."""
+    from rich.table import Table
+
+    from veilscan.core.mitre import full_crosswalk
+
+    table = Table(title="VeilScan — Crosswalk MITRE ATT&CK", show_lines=True, expand=True)
+    table.add_column("VEIL", width=12)
+    table.add_column("ATT&CK", width=14)
+    table.add_column("Tecnica ATT&CK", overflow="fold")
+    table.add_column("Tactica", width=20)
+    table.add_column("Conf.", width=10)
+
+    for technique, mapped in full_crosswalk():
+        veil_code = technique.value.split(":")[0]
+        if not mapped:
+            table.add_row(veil_code, "-", "-", "-", "-")
+            continue
+        for i, m in enumerate(mapped):
+            conf_style = "green" if m.confidence == "direct" else "yellow"
+            table.add_row(
+                veil_code if i == 0 else "",
+                m.id,
+                m.name,
+                m.tactic,
+                f"[{conf_style}]{m.confidence}[/{conf_style}]",
+            )
+    console.print(table)
+    console.print("[dim]direct = correspondencia 1:1 con ATT&CK · analogous = mapeo conceptual "
+                  "(ATT&CK Enterprise no cubre ataques dirigidos a LLMs de forma nativa)[/dim]")
+
+
 def main():
     app()
 

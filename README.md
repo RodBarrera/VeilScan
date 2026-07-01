@@ -52,7 +52,7 @@ Leyenda: ✅ Listo · 🚧 En progreso · ⬜ Pendiente
 | Validación magic-number / MIME | detectar spoofing de extensión antes de parsear | 2 | ⬜ |
 | Capa "juez LLM" (opcional) | usa la API de Anthropic para explicar qué dice el texto oculto, construida defensivamente | 2 | ✅ |
 | Atribución de `3 Tr` | mini-parser de content stream para extraer el texto invisible exacto | 2 | ⬜ |
-| Mapeo formal a MITRE ATT&CK | etiquetar cada hallazgo con su técnica oficial | 2 | ⬜ |
+| Mapeo formal a MITRE ATT&CK | etiquetar cada hallazgo con su técnica oficial (crosswalk `veilscan/core/mitre.py`) | 2 | ✅ |
 | Modo batch recursivo | escanea carpetas enteras y emite un resumen agregado | 2 | ✅ |
 | GitHub Action | gate de CI listo para usar en pipelines | 2 | ⬜ |
 
@@ -106,6 +106,9 @@ veilscan scan untrusted.pdf --fail-on HIGH
 
 # limpiar un PDF (metadatos + JS)
 veilscan sanitize sucio.pdf --out limpio.pdf
+
+# ver el crosswalk completo VEIL-TXXX -> MITRE ATT&CK
+veilscan mitre
 ```
 
 ### Juez LLM (opcional)
@@ -169,6 +172,25 @@ VeilScan usa una taxonomía propia (con guiño a MITRE ATT&CK donde aplica):
 | VEIL-T007 | Invocación de herramientas / acción no solicitada |
 | VEIL-T008 | Contenido activo (JavaScript embebido) |
 | VEIL-T009 | Inyección vía metadatos |
+
+### Crosswalk a MITRE ATT&CK
+
+Cada técnica VEIL se mapea a una o más técnicas oficiales de [MITRE ATT&CK
+Enterprise](https://attack.mitre.org/), visible en la salida de terminal, HTML,
+PDF y JSON, y consultable de forma completa con:
+
+```bash
+veilscan mitre
+```
+
+ATT&CK Enterprise se diseñó para intrusión en redes/endpoints, no para ataques
+dirigidos a modelos de lenguaje, así que algunos mapeos son **directos** (p.ej.
+`VEIL-T003` → `T1036.002 Right-to-Left Override`, una sub-técnica que coincide
+exactamente) y otros son **análogos** — la técnica más cercana en espíritu,
+marcada con `~` (p.ej. `VEIL-T005` → `T1059 Command and Scripting Interpreter`,
+tratando al LLM como el intérprete al que se le inyectan comandos). El detalle
+completo, con la justificación de cada mapeo, está en
+[`veilscan/core/mitre.py`](veilscan/core/mitre.py).
 
 ---
 

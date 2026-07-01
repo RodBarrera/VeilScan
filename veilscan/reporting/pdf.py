@@ -109,7 +109,7 @@ def render(result: ScanResult, out_path: str) -> str:
 
     # --- Tabla de hallazgos ---
     header = [Paragraph(h, ss["VCellBold"]) for h in
-              ("#", "Sev", "Tecnica", "Ubicacion", "Hallazgo / Evidencia")]
+              ("#", "Sev", "Tecnica", "ATT&CK", "Ubicacion", "Hallazgo / Evidencia")]
     rows = [header]
     sev_cells = []  # para colorear la columna Sev por fila
 
@@ -119,15 +119,23 @@ def render(result: ScanResult, out_path: str) -> str:
         cell = Paragraph(
             f"<b>{_esc(f.title)}</b><br/><font face='Courier' size='7.5'>{_esc(f.evidence_preview(280))}</font>",
             ss["VCell"])
+        mitre_list = f.mitre
+        if mitre_list:
+            m = mitre_list[0]
+            mark = "" if m.confidence == "direct" else "~"
+            mitre_text = f"<font face='Courier'>{_esc(m.id)}{mark}</font>"
+        else:
+            mitre_text = "-"
         rows.append([
             Paragraph(str(i), ss["VCell"]),
             sev_para,
             Paragraph(_esc(f.technique.value.split(':')[0]), ss["VCell"]),
+            Paragraph(mitre_text, ss["VCell"]),
             Paragraph(_esc(f.location), ss["VCell"]),
             cell,
         ])
 
-    table = Table(rows, colWidths=[8 * mm, 16 * mm, 24 * mm, 30 * mm, 100 * mm], repeatRows=1)
+    table = Table(rows, colWidths=[7 * mm, 14 * mm, 22 * mm, 16 * mm, 25 * mm, 94 * mm], repeatRows=1)
     style = [
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f2430")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
@@ -144,6 +152,10 @@ def render(result: ScanResult, out_path: str) -> str:
         style.append(("TEXTCOLOR", (1, row_idx), (1, row_idx), color))
     table.setStyle(TableStyle(style))
     story.append(table)
+    story.append(Spacer(1, 4))
+    story.append(Paragraph(
+        "ATT&amp;CK: id sin marca = correspondencia directa &middot; id con ~ = mapeo analogo "
+        "(sin equivalente exacto en ATT&amp;CK Enterprise)", ss["VSub"]))
     story.append(Spacer(1, 10))
     story.append(_footer(ss))
 

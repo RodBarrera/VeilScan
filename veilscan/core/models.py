@@ -107,6 +107,17 @@ class Finding:
         flat = " ".join(self.evidence.split())
         return flat[:limit] + ("..." if len(flat) > limit else "")
 
+    @property
+    def mitre(self) -> list:
+        """Tecnicas MITRE ATT&CK asociadas a este hallazgo (ver core/mitre.py).
+
+        Import local para evitar import circular: mitre.py importa Technique
+        desde este mismo archivo.
+        """
+        from veilscan.core.mitre import get_mitre
+
+        return get_mitre(self.technique)
+
 
 @dataclass
 class LlmAssessment:
@@ -196,6 +207,16 @@ class ScanResult:
                     "hidden": f.hidden,
                     "evidence": f.evidence_preview(400),
                     "detail": f.detail,
+                    "mitre_attack": [
+                        {
+                            "id": m.id,
+                            "name": m.name,
+                            "tactic": m.tactic,
+                            "confidence": m.confidence,
+                            "url": m.url,
+                        }
+                        for m in f.mitre
+                    ],
                 }
                 for f in self.findings
             ],

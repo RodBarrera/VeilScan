@@ -85,15 +85,25 @@ def render(result: ScanResult, console: Console | None = None) -> None:
     table.add_column("#", justify="right", width=3)
     table.add_column("Sev", width=9)
     table.add_column("Tecnica", width=22)
+    table.add_column("ATT&CK", width=12)
     table.add_column("Ubicacion", width=20)
     table.add_column("Evidencia", overflow="fold")
 
     for i, f in enumerate(sorted(result.findings, key=lambda x: -x.severity.weight), 1):
         sev = Text(f.severity.value, style=_SEV_STYLE[f.severity])
         tech = f.technique.value.split(":")[0]  # solo el codigo VEIL-TXXX
-        table.add_row(str(i), sev, tech, f.location, f"{f.title}\n[dim]{f.evidence_preview(180)}[/dim]")
+        mitre = f.mitre
+        if mitre:
+            m = mitre[0]
+            mark = "" if m.confidence == "direct" else "~"
+            attck = Text(f"{m.id}{mark}")
+        else:
+            attck = Text("-", style="dim")
+        table.add_row(str(i), sev, tech, attck, f.location, f"{f.title}\n[dim]{f.evidence_preview(180)}[/dim]")
 
     console.print(table)
+    console.print("[dim]ATT&CK: id sin marca = correspondencia directa · id con ~ = mapeo analogo "
+                  "(sin equivalente exacto en ATT&CK Enterprise, ver docs)[/dim]")
     console.print()
     _render_llm(result, console)
 

@@ -109,7 +109,15 @@ def test_pdf_report_generates(tmp_path):
 
 # ----------------------- juez LLM ----------------------- #
 def test_llm_unavailable_without_key(monkeypatch):
+    from veilscan.detectors import llm_judge
+
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    # Ademas de borrar la variable, bloqueamos la carga automatica de .env:
+    # si la maquina tiene un .env real (p.ej. tras rotar una key filtrada),
+    # _load_env() la volveria a poblar y el test dejaria de probar lo que dice
+    # probar. Este test quiere aislar el caso "sin key", sin importar el .env
+    # local de quien lo corre.
+    monkeypatch.setattr(llm_judge, "_load_env", lambda: None)
     r = scanner.scan_file(os.path.join(FIX, "injected.pdf"), use_llm=True)
     # el scan funciona igual; el juez solo se marca no disponible
     assert r.risk_score >= 70
@@ -183,3 +191,49 @@ def test_batch_non_recursive_lists_top_level():
 def test_unsupported_format():
     r = scanner.scan_file("inexistente.txt")
     assert r.error is not None
+
+
+# ----------------------- mapeo MITRE ATT&CK ----------------------- #
+def test_every_veil_technique_has_mitre_mapping():
+    from veilscan.core.mitre import get_mitre
+    from veilscan.core.models import Technique
+
+    for technique in Technique:
+        mapped = get_mitre(technique)
+        assert mapped, f"{technique.name} no tiene mapeo MITRE ATT&CK"
+        for m in mapped:
+            assert m.id.startswith("T")
+            assert m.confidence in ("direct", "analogous")
+            assert m.url.startswith("https://attack.mitre.org/techniques/")
+
+
+def test_finding_exposes_mitre_property():
+    from veilscan.core.models import Finding, Severity, Technique
+
+    f = Finding(
+        technique=Technique.BIDI_OVERRIDE,
+        severity=Severity.HIGH,
+        title="test",
+        location="loc",
+        evidence="evidence",
+    )
+    assert f.mitre[0].id == "T1036.002"
+    assert f.mitre[0].confidence == "direct"
+
+
+def test_scan_result_to_dict_includes_mitre():
+    r = scanner.scan_file(os.path.join(FIX, "injected.pdf"))
+    d = r.to_dict()
+    assert any(fd["mitre_attack"] for fd in d["findings"])
+    sample = next(fd for fd in d["findings"] if fd["mitre_attack"])
+    assert {"id", "name", "tactic", "confidence", "url"} <= sample["mitre_attack"][0].keys()
+
+
+def test_mitre_cli_command_runs():
+    from typer.testing import CliRunner
+
+    from veilscan.cli import app
+
+    result = CliRunner().invoke(app, ["mitre"])
+    assert result.exit_code == 0
+    assert "T1027" in result.stdout
