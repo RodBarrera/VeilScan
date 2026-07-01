@@ -1,5 +1,7 @@
 # VeilScan
 
+[![Tests](https://github.com/RodBarrera/VeilScan/actions/workflows/tests.yml/badge.svg)](https://github.com/RodBarrera/VeilScan/actions/workflows/tests.yml)
+
 **Detector de inyección de prompt oculta en documentos.**
 
 VeilScan analiza documentos (PDF, DOCX, XLSX, PPTX) en busca de instrucciones ocultas dirigidas
@@ -54,7 +56,7 @@ Leyenda: ✅ Listo · 🚧 En progreso · ⬜ Pendiente
 | Atribución de `3 Tr` | mini-parser de content stream para extraer el texto invisible exacto | 2 | ⬜ |
 | Mapeo formal a MITRE ATT&CK | etiquetar cada hallazgo con su técnica oficial (crosswalk `veilscan/core/mitre.py`) | 2 | ✅ |
 | Modo batch recursivo | escanea carpetas enteras y emite un resumen agregado | 2 | ✅ |
-| GitHub Action | gate de CI listo para usar en pipelines | 2 | ⬜ |
+| GitHub Action | gate de CI listo para usar en pipelines (`.github/workflows/tests.yml`) | 2 | ✅ |
 
 Marca las casillas de la columna **Estado** a medida que completes la Fase 2.
 

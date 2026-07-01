@@ -1,0 +1,45 @@
+name: Tests
+
+# Cuando se dispara este workflow:
+#   - push a main            -> valida que lo que llega a main funciona
+#   - pull_request hacia main -> valida ANTES de mergear (gate de calidad)
+#   - workflow_dispatch       -> permite correrlo a mano desde la pestaña Actions
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    # Matriz: el job completo se corre una vez por cada version de Python
+    # listada. pyproject.toml declara requires-python = ">=3.10", asi que
+    # probamos el piso (3.10) y dos versiones mas nuevas para detectar
+    # temprano si algo se rompe con Python mas reciente.
+    strategy:
+      fail-fast: false  # si 3.10 falla, igual queremos ver el resultado de 3.11/3.12
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - name: Clonar el repo
+        uses: actions/checkout@v4
+
+      - name: Configurar Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"  # cachea las wheels descargadas entre corridas -> runs mas rapidos
+
+      # Instala VeilScan con los extras 'dev' (pytest) y 'llm' (anthropic +
+      # python-dotenv). Instalamos 'llm' tambien aqui para que los tests del
+      # juez LLM corran de verdad (estan mockeados, no llaman a la API real)
+      # en vez de saltarse con pytest.importorskip.
+      - name: Instalar VeilScan (dev + llm)
+        run: pip install -e ".[dev,llm]"
+
+      - name: Ejecutar la suite de tests
+        run: python -m pytest -q
