@@ -23,13 +23,45 @@ from veilscan.core.models import Severity
 from veilscan.reporting import html as html_report
 from veilscan.reporting import terminal as terminal_report
 
-app = typer.Typer(add_completion=False, help="VeilScan — detector de inyeccion de prompt oculta en documentos.")
+app = typer.Typer(
+    add_completion=False,
+    help="VeilScan — detector de inyeccion de prompt oculta en documentos.",
+    epilog=(
+        "Chuleta rapida (cada comando tiene su propio --help con mas detalle):\n\n"
+        "• veilscan scan doc.pdf -- escanear un archivo\n\n"
+        "• veilscan scan ./carpeta/ -r -- escanear una carpeta entera (recursivo)\n\n"
+        "• veilscan scan doc.pdf --llm -- activar el juez LLM (necesita ANTHROPIC_API_KEY)\n\n"
+        "• veilscan scan doc.pdf --html reporte.html -- reporte HTML\n\n"
+        "• veilscan scan doc.pdf --pdf reporte.pdf -- reporte PDF de un archivo\n\n"
+        "• veilscan scan ./carpeta/ -r --pdf lote.pdf -- reporte PDF consolidado de varios archivos\n\n"
+        "• veilscan scan ./carpeta/ -r --pdf ./reportes/ -- un PDF por archivo (ruta = carpeta)\n\n"
+        "• veilscan scan doc.pdf --fail-on HIGH -- exit code distinto de 0 para pipelines CI\n\n"
+        "• veilscan sanitize sucio.pdf -o limpio.pdf --deep -- sanitizacion profunda\n\n"
+        "• veilscan mitre -- crosswalk VEIL -> MITRE ATT&CK\n\n"
+        "• veilscan formats -- formatos soportados\n\n"
+        "Mas ejemplos: veilscan scan --help / veilscan sanitize --help"
+    ),
+)
 console = Console()
 
 _LEVELS = {"LOW": 3, "MEDIUM": 15, "HIGH": 40, "CRITICAL": 70}
 
 
-@app.command()
+@app.command(epilog=(
+    "Ejemplos:\n\n"
+    "• veilscan scan cv.pdf -- un archivo\n\n"
+    "• veilscan scan *.docx --json -- varios archivos, salida JSON\n\n"
+    "• veilscan scan ./carpeta/ -r -- carpeta entera, recursivo (varios formatos a la vez)\n\n"
+    "• veilscan scan ./carpeta/ -r --details -- lote + tabla completa de cada archivo\n\n"
+    "• veilscan scan cv.pdf --llm -- activa el juez LLM (explica el texto oculto)\n\n"
+    "• veilscan scan cv.pdf --llm --llm-model claude-haiku-4-5 -- elegir el modelo del juez\n\n"
+    "• veilscan scan cv.pdf --html reporte.html -- reporte HTML\n\n"
+    "• veilscan scan cv.pdf --pdf reporte.pdf -- reporte PDF de un archivo\n\n"
+    "• veilscan scan ./carpeta/ -r --pdf lote.pdf -- reporte PDF CONSOLIDADO del lote\n\n"
+    "• veilscan scan ./carpeta/ -r --pdf ./reportes/ -- un PDF por archivo (ruta = carpeta)\n\n"
+    "• veilscan scan cv.pdf --fail-on HIGH -- exit code !=0 si el riesgo llega a HIGH (CI)\n\n"
+    "• veilscan scan ./carpeta/ -r -q -- solo mostrar archivos con hallazgos"
+))
 def scan(
     paths: list[str] = typer.Argument(..., help="Archivos o carpetas a analizar (.pdf, .docx, .xlsx, .pptx)."),
     recursive: bool = typer.Option(False, "--recursive", "-r", help="Recorre subcarpetas al pasar un directorio."),
@@ -117,7 +149,11 @@ def scan(
     raise typer.Exit(0)
 
 
-@app.command()
+@app.command(epilog=(
+    "Ejemplos:\n\n"
+    "• veilscan sanitize sucio.pdf --out limpio.pdf -- Fase 1: metadatos + JavaScript\n\n"
+    "• veilscan sanitize sucio.pdf --out limpio.pdf --deep -- Fase 2: + runs ocultos, OCG, Unicode invisible"
+))
 def sanitize(
     path: str = typer.Argument(..., help="PDF a limpiar."),
     out: str = typer.Option(..., "--out", "-o", help="Ruta del PDF de salida."),

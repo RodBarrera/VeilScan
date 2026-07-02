@@ -30,6 +30,18 @@ VeilScan apunta a tres cosas que casi ninguno combina:
 
 ---
 
+## Capturas
+
+Reporte HTML (autocontenido, pensado para adjuntar o subir a un ticket):
+
+![Reporte HTML de VeilScan](docs/img/reporte_html.png)
+
+Reporte PDF (evidencia/auditoría, con tabla de hallazgos y mapeo a MITRE ATT&CK):
+
+![Reporte PDF de VeilScan](docs/img/reporte_pdf.png)
+
+---
+
 ## Estado de componentes
 
 Leyenda: ✅ Listo · 🚧 En progreso · ⬜ Pendiente
