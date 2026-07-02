@@ -51,7 +51,7 @@ Leyenda: ✅ Listo · 🚧 En progreso · ⬜ Pendiente
 | Tests + fixtures | `pytest` + generador de documentos maliciosos de prueba | 1 | ✅ |
 | Extractor **XLSX** | hojas `veryHidden`, filas/cols ocultas, fuente blanca, formato `;;;`, comentarios, metadatos | 2 | ✅ |
 | Extractor **PPTX** | shapes fuera del slide, slides ocultos, notas del orador, fuente diminuta/blanca, alt-text | 2 | ✅ |
-| Sanitización profunda | eliminar runs ocultos, capas OCG, normalizar Unicode, reescritura | 2 | ⬜ |
+| Sanitización profunda | eliminar runs ocultos, capas OCG, normalizar Unicode, reescritura (`veilscan sanitize --deep`) | 2 | ✅ |
 | Validación magic-number / MIME | detectar spoofing de extensión antes de parsear (`veilscan/core/magic.py`) | 2 | ✅ |
 | Capa "juez LLM" (opcional) | usa la API de Anthropic para explicar qué dice el texto oculto, construida defensivamente | 2 | ✅ |
 | Atribución de `3 Tr` | mini-parser de content stream para extraer el texto invisible exacto | 2 | ⬜ |
@@ -110,12 +110,50 @@ veilscan scan untrusted.pdf --pdf reporte.pdf
 # usar como gate en CI: exit code != 0 si el riesgo llega a HIGH
 veilscan scan untrusted.pdf --fail-on HIGH
 
-# limpiar un PDF (metadatos + JS)
+# limpiar un PDF (Fase 1: metadatos + JS)
 veilscan sanitize sucio.pdf --out limpio.pdf
+
+# limpiar un PDF a fondo (Fase 2: + runs ocultos, capas OCG, Unicode invisible)
+veilscan sanitize sucio.pdf --out limpio.pdf --deep
 
 # ver el crosswalk completo VEIL-TXXX -> MITRE ATT&CK
 veilscan mitre
 ```
+
+### Sanitización profunda (`--deep`)
+
+`sanitize` sin `--deep` (Fase 1) solo borra metadatos y JavaScript: seguro,
+pero no toca el contenido de la página, así que un run de texto casi blanco o
+una capa OCG apagada siguen ahí — un LLM que reciba ese PDF "limpio" sigue
+leyendo la inyección igual. `--deep` (ver
+[`veilscan/sanitizer/deep.py`](veilscan/sanitizer/deep.py)) va más allá y
+reescribe el contenido en 4 pasos:
+
+1. Fase 1 (metadatos + JavaScript).
+2. Borra el contenido de las capas OCG ocultas y la definición de la capa
+   misma (no solo la deja "apagada").
+3. Redacta los runs de texto detectados como ocultos por heurística (casi
+   blanco, fuente diminuta, fuera de página): se borra el dibujo real, no se
+   tapa.
+4. Los runs con Unicode invisible mezclado en texto por lo demás visible
+   (zero-width, tag block, bidi override) se redactan y se reinsertan ya
+   normalizados, en la misma posición y estilo.
+
+Al final reescribe el PDF completo (no basta con borrar referencias; hay que
+reconstruir el archivo para que los objetos ya sin uso no sigan viviendo
+adentro). El resultado, vuelto a escanear con VeilScan, sale limpio:
+
+```bash
+veilscan sanitize cv_con_inyeccion.pdf --out cv_limpio.pdf --deep
+veilscan scan cv_limpio.pdf
+# -> CLEAN
+```
+
+**Limitación conocida:** el texto en modo de render invisible (operador
+`3 Tr`) todavía no se puede aislar y redactar con precisión run por run — eso
+depende del parser de content stream pendiente en "Atribución de `3 Tr`" del
+roadmap. Si el documento original reportó ese hallazgo, `--deep` lo advierte
+al final de la lista de acciones y conviene revisar el resultado a mano.
 
 ### Validación de magic-number (spoofing de extensión)
 

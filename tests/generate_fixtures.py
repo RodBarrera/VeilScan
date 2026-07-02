@@ -128,6 +128,64 @@ def _unicode_pdf(path: str) -> None:
     doc.close()
 
 
+def _ocg_pdf(path: str) -> None:
+    """PDF con una capa OCG (Optional Content Group) apagada por defecto que
+    contiene la inyeccion. `oc=` en insert_text() marca ese dibujo con la capa:
+    fitz genera el bloque `/OCxx BDC ... EMC` correspondiente en el content
+    stream, y `add_ocg(..., on=False)` la registra en /OCProperties/D/OFF."""
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "Contrato de servicios - version final", fontsize=12)
+    ocg_xref = doc.add_ocg("CapaOculta", on=False)
+    page.insert_text((72, 200), INJECTION, fontsize=10, oc=ocg_xref)
+    doc.save(path)
+    doc.close()
+
+
+def _unicode_visible_pdf(path: str) -> None:
+    """PDF construido a mano (con pikepdf) que reproduce la tecnica real de
+    "ToUnicode smuggling": el GLIFO que se dibuja es un espacio normal, pero el
+    CMap /ToUnicode de la fuente mapea ese mismo codigo de caracter a un
+    zero-width space (U+200B). Un humano ve un espacio; un parser de texto (o
+    un LLM) extrae un caracter invisible en su lugar.
+
+    No se puede lograr esto con `page.insert_text()` de PyMuPDF: las fuentes
+    base-14 (Helvetica, etc.) no tienen glifo para U+200B y MuPDF sustituye
+    silenciosamente otro caracter visible al dibujar, lo que arruinaria la
+    prueba. Por eso este fixture arma el PDF directamente a nivel de objetos.
+    """
+    import pikepdf
+
+    pdf = pikepdf.new()
+    page = pdf.add_blank_page(page_size=(612, 792))
+
+    font = pdf.make_indirect(pikepdf.Dictionary(
+        Type=pikepdf.Name.Font,
+        Subtype=pikepdf.Name.Type1,
+        BaseFont=pikepdf.Name("/Helvetica"),
+        Encoding=pikepdf.Dictionary(
+            Type=pikepdf.Name.Encoding,
+            BaseEncoding=pikepdf.Name.WinAnsiEncoding,
+            Differences=[1, pikepdf.Name("/space")],  # codigo 0x01 se DIBUJA como espacio
+        ),
+    ))
+    tounicode_cmap = (
+        "/CIDInit /ProcSet findresource begin\n"
+        "12 dict begin\nbegincmap\n"
+        "1 begincodespacerange\n<01><01>\nendcodespacerange\n"
+        "1 beginbfchar\n<01><200B>\nendbfchar\n"
+        "endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend"
+    )
+    font.ToUnicode = pdf.make_stream(tounicode_cmap.encode("latin-1"))
+
+    page.Resources = pikepdf.Dictionary(Font=pikepdf.Dictionary(F1=font))
+    content = "BT /F1 12 Tf 72 720 Td (Aprobado\\001por gerencia el 12 de marzo.) Tj ET"
+    page.Contents = pdf.make_stream(content.encode("latin-1"))
+
+    pdf.save(path)
+    pdf.close()
+
+
 def _benign_xlsx(path: str) -> None:
     import openpyxl
     wb = openpyxl.Workbook()
@@ -207,6 +265,8 @@ def main() -> None:
     _benign_docx(os.path.join(FIX, "benign.docx"))
     _injected_docx(os.path.join(FIX, "injected.docx"))
     _unicode_pdf(os.path.join(FIX, "unicode_smuggling.pdf"))
+    _ocg_pdf(os.path.join(FIX, "ocg_hidden.pdf"))
+    _unicode_visible_pdf(os.path.join(FIX, "unicode_visible.pdf"))
     _benign_xlsx(os.path.join(FIX, "benign.xlsx"))
     _injected_xlsx(os.path.join(FIX, "injected.xlsx"))
     _benign_pptx(os.path.join(FIX, "benign.pptx"))

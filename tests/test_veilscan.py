@@ -19,7 +19,12 @@ FIX = os.path.join(os.path.dirname(__file__), "fixtures")
 
 @pytest.fixture(scope="session", autouse=True)
 def _ensure_fixtures():
-    if not os.path.exists(os.path.join(FIX, "injected.pdf")):
+    # Se regeneran TODOS los fixtures si falta cualquiera de los "nuevos"
+    # (no solo injected.pdf): asi, si alguien ya tenia una carpeta
+    # tests/fixtures/ de una corrida anterior a que se agregara un fixture,
+    # igual se genera sin necesidad de borrar la carpeta a mano.
+    needed = ("injected.pdf", "ocg_hidden.pdf", "unicode_visible.pdf")
+    if any(not os.path.exists(os.path.join(FIX, name)) for name in needed):
         generate_fixtures.main()
 
 
@@ -262,6 +267,94 @@ def test_batch_non_recursive_lists_top_level():
 def test_unsupported_format():
     r = scanner.scan_file("inexistente.txt")
     assert r.error is not None
+
+
+# ----------------------- sanitizacion profunda (Fase 2) ----------------------- #
+def test_deep_sanitize_removes_hidden_text_runs(tmp_path):
+    """casi-blanco y fuente diminuta deben desaparecer del contenido real,
+    no solo quedar reportados."""
+    from veilscan.sanitizer.deep import sanitize_pdf_deep
+
+    out = str(tmp_path / "clean.pdf")
+    actions = sanitize_pdf_deep(os.path.join(FIX, "injected.pdf"), out)
+    assert any("texto oculto" in a for a in actions)
+
+    r = scanner.scan_file(out)
+    assert r.risk_score == 0
+    assert r.is_clean
+    # el texto visible original debe sobrevivir intacto
+    import fitz
+    doc = fitz.open(out)
+    assert "Curriculum Vitae" in doc[0].get_text()
+    doc.close()
+
+
+def test_deep_sanitize_removes_ocg_layer_content_and_definition(tmp_path):
+    """La capa OCG oculta debe perder su contenido Y su definicion, no solo
+    seguir 'apagada'."""
+    import pikepdf
+
+    from veilscan.sanitizer.deep import sanitize_pdf_deep
+
+    out = str(tmp_path / "clean.pdf")
+    actions = sanitize_pdf_deep(os.path.join(FIX, "ocg_hidden.pdf"), out)
+    assert any("OCG" in a for a in actions)
+
+    r = scanner.scan_file(out)
+    assert r.is_clean
+
+    pdf = pikepdf.open(out)
+    if "/OCProperties" in pdf.Root:
+        d = pdf.Root.OCProperties.get("/D", {})
+        assert list(d.get("/OFF", [])) == []
+    pdf.close()
+
+
+def test_deep_sanitize_normalizes_unicode_in_visible_text(tmp_path):
+    """El zero-width space mezclado en texto visible debe desaparecer del
+    texto extraible tras la sanitizacion, preservando el resto del texto."""
+    from veilscan.sanitizer.deep import sanitize_pdf_deep
+
+    out = str(tmp_path / "clean.pdf")
+    actions = sanitize_pdf_deep(os.path.join(FIX, "unicode_visible.pdf"), out)
+    assert any("Unicode invisible" in a for a in actions)
+
+    r = scanner.scan_file(out)
+    assert r.is_clean
+
+    import fitz
+    doc = fitz.open(out)
+    text = doc[0].get_text()
+    assert "\u200b" not in text
+    assert "gerencia" in text  # el resto del contenido visible se preserva
+    doc.close()
+
+
+def test_deep_sanitize_is_a_no_op_on_a_benign_pdf(tmp_path):
+    from veilscan.sanitizer.deep import sanitize_pdf_deep
+
+    out = str(tmp_path / "clean.pdf")
+    sanitize_pdf_deep(os.path.join(FIX, "benign.pdf"), out)
+    r = scanner.scan_file(out)
+    assert r.is_clean
+    import fitz
+    doc = fitz.open(out)
+    assert "Informe trimestral" in doc[0].get_text()
+    doc.close()
+
+
+def test_cli_sanitize_deep_flag(tmp_path):
+    from typer.testing import CliRunner
+
+    from veilscan.cli import app
+
+    out = tmp_path / "clean.pdf"
+    result = CliRunner().invoke(app, ["sanitize", os.path.join(FIX, "injected.pdf"),
+                                       "--out", str(out), "--deep"])
+    assert result.exit_code == 0
+    assert out.is_file()
+    r = scanner.scan_file(str(out))
+    assert r.is_clean
 
 
 # ----------------------- mapeo MITRE ATT&CK ----------------------- #

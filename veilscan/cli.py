@@ -7,6 +7,7 @@ Ejemplos:
     veilscan scan cv.pdf --html reporte.html
     veilscan scan ./carpeta/ -r --pdf reporte_lote.pdf   # 1 PDF consolidado para todo el lote
     veilscan scan untrusted.pdf --fail-on HIGH    # exit!=0 para pipelines CI
+    veilscan sanitize sucio.pdf --out limpio.pdf --deep   # sanitizacion profunda (Fase 2)
 """
 
 from __future__ import annotations
@@ -120,14 +121,21 @@ def scan(
 def sanitize(
     path: str = typer.Argument(..., help="PDF a limpiar."),
     out: str = typer.Option(..., "--out", "-o", help="Ruta del PDF de salida."),
+    deep: bool = typer.Option(False, "--deep", help="Sanitizacion profunda: ademas de metadatos/JS, "
+                               "elimina runs de texto oculto, capas OCG y Unicode invisible del contenido."),
 ):
-    """Genera una copia mas limpia de un PDF (Fase 1: metadatos y JavaScript)."""
-    from veilscan.sanitizer.pdf_sanitizer import sanitize_pdf
-
+    """Genera una copia mas limpia de un PDF (Fase 1: metadatos y JavaScript; --deep: Fase 2 completa)."""
     if not path.lower().endswith(".pdf"):
-        console.print("[red]La sanitizacion en Fase 1 solo soporta PDF.[/red]")
+        console.print("[red]La sanitizacion solo soporta PDF.[/red]")
         raise typer.Exit(2)
-    actions = sanitize_pdf(path, out)
+
+    if deep:
+        from veilscan.sanitizer.deep import sanitize_pdf_deep
+        actions = sanitize_pdf_deep(path, out)
+    else:
+        from veilscan.sanitizer.pdf_sanitizer import sanitize_pdf
+        actions = sanitize_pdf(path, out)
+
     console.print(f"[green]Copia sanitizada escrita en {out}[/green]")
     for a in actions:
         console.print(f"  - {a}")
