@@ -18,9 +18,14 @@ parrafo visible siguen ahi despues de la Fase 1 -- un LLM que reciba el PDF
      de content-stream de pikepdf (parse_content_stream/unparse_content_stream)
      en vez de manipular bytes crudos con regex, que es fragil ante streams
      con formato irregular.
-  3. Runs de texto ocultos por heuristica (casi blanco / fuente diminuta /
-     fuera de pagina) -- se redactan con PyMuPDF: se borra el dibujo original
-     en esa zona de la pagina, no solo se tapa visualmente.
+  3. Runs de texto ocultos -- casi blanco, fuente diminuta, fuera de pagina, y
+     texto en modo de render invisible (operador `3 Tr`, atribuido por span
+     via el campo `alpha` que expone PyMuPDF -- ver
+     `veilscan/extractors/pdf.py`). Se redactan con PyMuPDF: se borra el
+     dibujo original en esa zona de la pagina, no solo se tapa visualmente.
+     El texto realmente invisible (alpha=0) se redacta SIN caja de color
+     encima (`fill=None`): como nunca se pinto nada, pintar con el color
+     interno del span podria dejar una marca donde antes no habia ninguna.
   4. Unicode invisible DENTRO de texto por lo demas visible (zero-width, tag
      block, controles bidireccionales) -- el run se redacta y se reinserta ya
      normalizado, en la misma posicion/tamano/color, para no alterar como se
@@ -30,14 +35,10 @@ Al final se reescribe el PDF completo (`clean=True, garbage=4`): borrar
 referencias no basta, hay que reconstruir el archivo para que los objetos ya
 sin referencias no sigan viviendo en el archivo de salida.
 
-LIMITACION CONOCIDA -- texto en modo de render invisible (operador `3 Tr`):
-hoy el extractor solo CONFIRMA que el operador aparece en el stream (ver
-`veilscan/extractors/pdf.py::_scan_invisible_render`), pero no aisla que texto
-puntual corresponde a cada aparicion -- ese es el trabajo pendiente
-"Atribucion de 3 Tr" del roadmap. Sin ese mini-parser, la sanitizacion
-profunda NO puede redactar con precision el texto invisible por 3 Tr. Si el
-escaneo previo reporto ese hallazgo, `sanitize_pdf_deep()` lo advierte en la
-lista de acciones devuelta, pero recomienda revision manual de ese documento.
+Nota sobre el paso 3: en el caso raro de que el operador `3 Tr` este presente
+en el stream pero ningun span se haya podido atribuir por alpha (fuente no
+estandar, texto vacio, etc.), se agrega un aviso a las acciones devueltas en
+vez de fallar en silencio -- igual que hace el extractor en ese mismo caso.
 """
 
 from __future__ import annotations
@@ -71,14 +72,6 @@ def sanitize_pdf_deep(in_path: str, out_path: str) -> list[str]:
         # Pasos 3 y 4: redaccion de runs ocultos + normalizacion Unicode +
         # reescritura final (PyMuPDF), directo sobre out_path.
         actions.extend(_redact_and_rewrite(stage1, out_path))
-
-    if _has_invisible_render_mode(out_path):
-        actions.append(
-            "AVISO: se detecto el operador '3 Tr' (texto en modo de render "
-            "invisible) en al menos una pagina. La sanitizacion profunda aun "
-            "no puede aislar y redactar ese texto con precision (ver "
-            "'Atribucion de 3 Tr' en el roadmap) -- revisar este documento a mano."
-        )
 
     if not actions:
         actions.append("Sin cambios aplicables (no se encontraron superficies limpiables).")
@@ -196,11 +189,13 @@ def _redact_and_rewrite(in_path: str, out_path: str) -> list[str]:
 
     hidden_redactions = 0
     unicode_redactions = 0
+    unattributed_pages = 0
 
     for page in doc:
         rect = page.rect
         raw = page.get_text("rawdict")
         pending_reinsert = []  # (point, text, size, color) a reinsertar tras aplicar redacciones
+        attributed_invisible_render = False
 
         for block in raw.get("blocks", []):
             for line in block.get("lines", []):
@@ -210,9 +205,21 @@ def _redact_and_rewrite(in_path: str, out_path: str) -> list[str]:
                         continue
                     size = float(span.get("size", 0.0))
                     color_int = int(span.get("color", 0))
+                    alpha = int(span.get("alpha", 255))
                     bbox = fitz.Rect(span.get("bbox", (0, 0, 0, 0)))
                     color_rgb = tuple(c / 255 for c in _int_to_rgb(color_int))
 
+                    if alpha == 0:
+                        # Texto realmente invisible (nunca se pinto nada en pantalla):
+                        # fill=None borra el contenido sin dibujar una caja de color
+                        # encima. Usar el color propio del span aqui seria un error --
+                        # como nunca se renderizo, ese valor puede ser cualquier cosa
+                        # (p.ej. negro) y dejaria una marca visible donde antes no
+                        # habia ninguna.
+                        page.add_redact_annot(bbox, fill=None)
+                        hidden_redactions += 1
+                        attributed_invisible_render = True
+                        continue
                     if _is_near_white(color_int) or (size and size < TINY_FONT_PT) or _is_off_page(bbox, rect):
                         page.add_redact_annot(bbox, fill=color_rgb)
                         hidden_redactions += 1
@@ -223,6 +230,16 @@ def _redact_and_rewrite(in_path: str, out_path: str) -> list[str]:
                         page.add_redact_annot(bbox, fill=(1, 1, 1))
                         pending_reinsert.append((bbox, normalized, size, color_rgb))
                         unicode_redactions += 1
+
+        # Red de seguridad: si '3 Tr' esta en el stream de la pagina pero no se
+        # atribuyo ningun span por alpha, no se puede redactar con precision.
+        if not attributed_invisible_render:
+            try:
+                raw_content = page.read_contents().decode("latin-1", errors="ignore")
+                if re.search(r"(^|\s)3\s+Tr(\s|$)", raw_content):
+                    unattributed_pages += 1
+            except Exception:
+                pass
 
         if page.first_annot is not None:
             page.apply_redactions()
@@ -238,34 +255,20 @@ def _redact_and_rewrite(in_path: str, out_path: str) -> list[str]:
 
     if hidden_redactions:
         actions.append(f"{hidden_redactions} run(s) de texto oculto (casi blanco / fuente "
-                        "diminuta / fuera de pagina) eliminados del contenido")
+                        "diminuta / fuera de pagina / modo de render invisible) eliminados del contenido")
     if unicode_redactions:
         actions.append(f"{unicode_redactions} run(s) con Unicode invisible (zero-width / "
                         "bidi / tag block) reescritos ya normalizados")
+    if unattributed_pages:
+        actions.append(
+            f"AVISO: {unattributed_pages} pagina(s) tienen el operador '3 Tr' en el stream "
+            "pero no se pudo atribuir a un span especifico (caso raro) -- revisar a mano.")
 
     # Reescritura final: no basta con guardar, hay que limpiar objetos huerfanos
     # que quedaron sin referencias tras las redacciones y el paso OCG.
     doc.save(out_path, garbage=4, deflate=True, clean=True)
     doc.close()
     return actions
-
-
-def _has_invisible_render_mode(path: str) -> bool:
-    try:
-        doc = fitz.open(path)
-    except Exception:
-        return False
-    found = False
-    for page in doc:
-        try:
-            content = page.read_contents().decode("latin-1", errors="ignore")
-        except Exception:
-            continue
-        if re.search(r"(^|\s)3\s+Tr(\s|$)", content):
-            found = True
-            break
-    doc.close()
-    return found
 
 
 def _int_to_rgb(color: int) -> tuple[int, int, int]:

@@ -186,6 +186,30 @@ def _unicode_visible_pdf(path: str) -> None:
     pdf.close()
 
 
+def _invisible_render_pdf(path: str) -> None:
+    """PDF construido a mano con el operador `3 Tr` (modo de render invisible)
+    real en el content stream: el texto no se dibuja en pantalla, pero
+    PyMuPDF lo extrae igual (con color y tamano normales, por eso el bug que
+    esto prueba: sin mirar `alpha`, se confunde con texto visible normal).
+    """
+    import pikepdf
+
+    pdf = pikepdf.new()
+    page = pdf.add_blank_page(page_size=(612, 792))
+    font = pdf.make_indirect(pikepdf.Dictionary(
+        Type=pikepdf.Name.Font, Subtype=pikepdf.Name.Type1,
+        BaseFont=pikepdf.Name("/Helvetica"), Encoding=pikepdf.Name.WinAnsiEncoding,
+    ))
+    page.Resources = pikepdf.Dictionary(Font=pikepdf.Dictionary(F1=font))
+    content = (
+        "BT /F1 12 Tf 72 720 Td (Informe de auditoria - Q2) Tj ET "
+        f"BT /F1 10 Tf 3 Tr 72 650 Td ({INJECTION}) Tj ET"
+    )
+    page.Contents = pdf.make_stream(content.encode("latin-1"))
+    pdf.save(path)
+    pdf.close()
+
+
 def _benign_xlsx(path: str) -> None:
     import openpyxl
     wb = openpyxl.Workbook()
@@ -267,6 +291,7 @@ def main() -> None:
     _unicode_pdf(os.path.join(FIX, "unicode_smuggling.pdf"))
     _ocg_pdf(os.path.join(FIX, "ocg_hidden.pdf"))
     _unicode_visible_pdf(os.path.join(FIX, "unicode_visible.pdf"))
+    _invisible_render_pdf(os.path.join(FIX, "invisible_render.pdf"))
     _benign_xlsx(os.path.join(FIX, "benign.xlsx"))
     _injected_xlsx(os.path.join(FIX, "injected.xlsx"))
     _benign_pptx(os.path.join(FIX, "benign.pptx"))

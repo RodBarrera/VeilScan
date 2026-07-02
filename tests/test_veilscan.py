@@ -23,7 +23,7 @@ def _ensure_fixtures():
     # (no solo injected.pdf): asi, si alguien ya tenia una carpeta
     # tests/fixtures/ de una corrida anterior a que se agregara un fixture,
     # igual se genera sin necesidad de borrar la carpeta a mano.
-    needed = ("injected.pdf", "ocg_hidden.pdf", "unicode_visible.pdf")
+    needed = ("injected.pdf", "ocg_hidden.pdf", "unicode_visible.pdf", "invisible_render.pdf")
     if any(not os.path.exists(os.path.join(FIX, name)) for name in needed):
         generate_fixtures.main()
 
@@ -261,6 +261,56 @@ def test_batch_non_recursive_lists_top_level():
     from veilscan.core import batch
     files = batch.expand_paths([FIX], recursive=False)
     assert len(files) >= 8
+
+
+# ----------------------- atribucion de 3 Tr (texto en modo de render invisible) ----------------------- #
+def test_invisible_render_mode_is_attributed_to_exact_text():
+    """El texto en modo `3 Tr` debe marcarse oculto y su contenido exacto debe
+    quedar disponible (no solo 'el operador esta presente')."""
+    r = scanner.scan_file(os.path.join(FIX, "invisible_render.pdf"))
+    assert r.hidden_chars > 0
+    techniques = {f.technique.name for f in r.findings}
+    assert "INSTRUCTION_OVERRIDE" in techniques  # la capa semantica ahora SI ve el texto
+    divergence = next(f for f in r.findings if f.title == "Divergencia entre vista humana y vista IA")
+    assert "invisible_render_mode" in divergence.evidence
+
+
+def test_invisible_render_mode_scales_severity_to_critical():
+    r = scanner.scan_file(os.path.join(FIX, "invisible_render.pdf"))
+    assert r.risk_label == "CRITICAL"
+
+
+def test_invisible_render_visible_text_survives_extraction():
+    """El texto normal en la misma pagina no debe verse afectado por la
+    atribucion de alpha=0 (sin falsos positivos): debe seguir marcado visible."""
+    from veilscan.extractors.pdf import PdfExtractor
+
+    extraction = PdfExtractor().extract(os.path.join(FIX, "invisible_render.pdf"))
+    visible_spans = [s for s in extraction.spans if s.visible]
+    hidden_spans = [s for s in extraction.spans if not s.visible]
+    assert any("Informe de auditoria" in s.text for s in visible_spans)
+    assert any(s.reason and s.reason.value == "invisible_render_mode" for s in hidden_spans)
+
+
+def test_deep_sanitize_removes_invisible_render_text(tmp_path):
+    """La sanitizacion profunda ahora SI puede redactar el texto en modo `3 Tr`,
+    porque se atribuye por span en vez de solo confirmarse a nivel de pagina."""
+    from veilscan.sanitizer.deep import sanitize_pdf_deep
+
+    out = str(tmp_path / "clean.pdf")
+    actions = sanitize_pdf_deep(os.path.join(FIX, "invisible_render.pdf"), out)
+    assert any("modo de render invisible" in a for a in actions)
+    assert not any("AVISO" in a for a in actions)  # no deberia caer al fallback
+
+    r = scanner.scan_file(out)
+    assert r.is_clean
+
+    import fitz
+    doc = fitz.open(out)
+    text = doc[0].get_text()
+    assert "IGNORE ALL PREVIOUS" not in text
+    assert "Informe de auditoria" in text
+    doc.close()
 
 
 # ----------------------- formato no soportado ----------------------- #

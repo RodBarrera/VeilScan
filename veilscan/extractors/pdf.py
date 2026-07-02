@@ -9,7 +9,7 @@ Superficies cubiertas:
   - Texto casi blanco (mismo color del fondo)         -> NEAR_WHITE
   - Fuente diminuta (< 2pt)                            -> TINY_FONT
   - Texto fuera del area visible de la pagina          -> OFF_PAGE
-  - Modo de render invisible (operador `3 Tr`)         -> hallazgo estructural
+  - Modo de render invisible (operador `3 Tr`)         -> INVISIBLE_RENDER (texto atribuido por span)
   - Capas OCG ocultas por defecto                      -> hallazgo estructural
   - JavaScript embebido / OpenAction                   -> hallazgo estructural
   - Metadatos (/Info + XMP)                             -> spans METADATA
@@ -67,9 +67,7 @@ class PdfExtractor(BaseExtractor):
             page_no = page_index + 1
             rect = page.rect
             raw = page.get_text("rawdict")
-
-            # Deteccion de modo de render invisible a nivel de stream.
-            self._scan_invisible_render(page, page_no, result)
+            attributed_invisible_render = False
 
             for block in raw.get("blocks", []):
                 for line in block.get("lines", []):
@@ -79,12 +77,25 @@ class PdfExtractor(BaseExtractor):
                             continue
                         size = float(span.get("size", 0.0))
                         color = int(span.get("color", 0))
+                        alpha = int(span.get("alpha", 255))
                         bbox = span.get("bbox", (0, 0, 0, 0))
                         r, g, b = _int_to_rgb(color)
                         color_hex = f"#{r:02X}{g:02X}{b:02X}"
 
+                        # alpha=0 es la huella que deja MuPDF cuando el texto se
+                        # dibuja con modo de render invisible (operador `3 Tr` o
+                        # `7 Tr`): no pinta nada, pero el texto SI se extrae. A
+                        # diferencia de casi-blanco o fuente diminuta, este texto
+                        # suele tener color y tamano completamente normales -- por
+                        # eso antes se colaba como "visible" y solo se reportaba
+                        # que el operador existia en la pagina, sin decir que texto
+                        # era. Revisando alpha por span en vez de solo el operador
+                        # a nivel de pagina, se atribuye el texto exacto.
                         reason = None
-                        if _is_near_white(color):
+                        if alpha == 0:
+                            reason = HideReason.INVISIBLE_RENDER
+                            attributed_invisible_render = True
+                        elif _is_near_white(color):
                             reason = HideReason.NEAR_WHITE
                         elif size and size < TINY_FONT_PT:
                             reason = HideReason.TINY_FONT
@@ -101,6 +112,13 @@ class PdfExtractor(BaseExtractor):
                                 color=color_hex,
                             )
                         )
+
+            # Red de seguridad: si el operador '3 Tr' aparece en el stream pero
+            # ningun span del page.get_text() se pudo atribuir por alpha==0 (caso
+            # raro: fuente no estandar, texto vacio, etc.), lo dejamos como aviso
+            # generico en vez de quedar en silencio.
+            if not attributed_invisible_render:
+                self._scan_invisible_render(page, page_no, result)
 
             # Anotaciones / comentarios
             for annot in page.annots() or []:
@@ -130,7 +148,9 @@ class PdfExtractor(BaseExtractor):
         )
 
     def _scan_invisible_render(self, page, page_no: int, result: ExtractionResult) -> None:
-        """Busca el operador `3 Tr` (modo de render: texto invisible) en el stream."""
+        """Fallback: el operador `3 Tr` esta en el stream pero ningun span se
+        pudo atribuir por alpha (ver `_extract_spans`). Se reporta igual, sin
+        texto exacto, para no perder la senal por completo."""
         try:
             content = page.read_contents().decode("latin-1", errors="ignore")
         except Exception:
@@ -141,12 +161,14 @@ class PdfExtractor(BaseExtractor):
                 Finding(
                     technique=Technique.HIDDEN_TEXT,
                     severity=Severity.HIGH,
-                    title="Texto en modo de render invisible (3 Tr)",
+                    title="Texto en modo de render invisible (3 Tr), sin atribuir",
                     location=f"page {page_no}",
-                    evidence="Operador '3 Tr' presente en el content stream",
+                    evidence="Operador '3 Tr' presente en el content stream, "
+                             "pero no se pudo asociar a un span especifico.",
                     detail=(
                         "La pagina usa el modo de render de texto 3 (invisible). El texto "
-                        "no se dibuja en pantalla pero un parser o LLM si lo lee."
+                        "no se dibuja en pantalla pero un parser o LLM si lo lee. No se pudo "
+                        "extraer el texto exacto en este caso (revisar manualmente)."
                     ),
                     hidden=True,
                 )

@@ -54,12 +54,12 @@ Leyenda: ✅ Listo · 🚧 En progreso · ⬜ Pendiente
 | Sanitización profunda | eliminar runs ocultos, capas OCG, normalizar Unicode, reescritura (`veilscan sanitize --deep`) | 2 | ✅ |
 | Validación magic-number / MIME | detectar spoofing de extensión antes de parsear (`veilscan/core/magic.py`) | 2 | ✅ |
 | Capa "juez LLM" (opcional) | usa la API de Anthropic para explicar qué dice el texto oculto, construida defensivamente | 2 | ✅ |
-| Atribución de `3 Tr` | mini-parser de content stream para extraer el texto invisible exacto | 2 | ⬜ |
+| Atribución de `3 Tr` | extraer el texto invisible exacto por span, via el campo `alpha` de PyMuPDF | 2 | ✅ |
 | Mapeo formal a MITRE ATT&CK | etiquetar cada hallazgo con su técnica oficial (crosswalk `veilscan/core/mitre.py`) | 2 | ✅ |
 | Modo batch recursivo | escanea carpetas enteras y emite un resumen agregado | 2 | ✅ |
 | GitHub Action | gate de CI listo para usar en pipelines (`.github/workflows/tests.yml`) | 2 | ✅ |
 
-Marca las casillas de la columna **Estado** a medida que completes la Fase 2.
+Fase 2 completa: todos los ítems del roadmap original están implementados.
 
 ---
 
@@ -149,11 +149,34 @@ veilscan scan cv_limpio.pdf
 # -> CLEAN
 ```
 
-**Limitación conocida:** el texto en modo de render invisible (operador
-`3 Tr`) todavía no se puede aislar y redactar con precisión run por run — eso
-depende del parser de content stream pendiente en "Atribución de `3 Tr`" del
-roadmap. Si el documento original reportó ese hallazgo, `--deep` lo advierte
-al final de la lista de acciones y conviene revisar el resultado a mano.
+Esto incluye el texto en modo de render invisible (operador `3 Tr`): antes se
+confirmaba solo a nivel de página ("el operador está presente"); ahora se
+atribuye por span exacto — ver la siguiente sección — así que `--deep`
+también lo redacta. Solo en el caso raro de que el operador aparezca en el
+stream sin que ningún span se pueda atribuir (fuente no estándar, texto
+vacío) `--deep` lo advierte al final de la lista de acciones para revisión manual.
+
+### Atribución de `3 Tr` (texto en modo de render invisible)
+
+El operador `3 Tr` le dice al visor "no dibujes este texto en pantalla" —
+pero un parser o un LLM lo sigue leyendo igual. El problema es que ese texto
+suele tener color y tamaño de fuente completamente normales, así que las
+otras heurísticas (casi blanco, fuente diminuta) no lo detectan por sí solas.
+
+La solución no fue escribir un parser de content-stream propio: PyMuPDF ya
+calcula, para cada fragmento de texto, un `alpha` (opacidad) efectivo —
+`0` cuando el modo de render no pinta nada (`3 Tr` o `7 Tr`), `255` en
+cualquier otro caso. Revisando ese campo por *span* (no solo si el operador
+aparece en algún lugar de la página), VeilScan sabe exactamente **qué texto**
+corresponde a cada aparición, lo marca oculto (`HideReason.INVISIBLE_RENDER`)
+y lo deja fluir por el resto del pipeline: divergencia, patrones semánticos y
+`--deep`, igual que cualquier otro texto oculto.
+
+```bash
+veilscan scan documento_con_3tr.pdf
+# -> VEIL-T001 con "Via: invisible_render_mode" y el texto exacto en la evidencia,
+#    en vez de un aviso generico de "el operador esta presente".
+```
 
 ### Validación de magic-number (spoofing de extensión)
 
