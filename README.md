@@ -46,6 +46,7 @@ Leyenda: ✅ Listo · 🚧 En progreso · ⬜ Pendiente
 | Reporte terminal (`rich`) | tabla con severidad, técnica, ubicación, evidencia | 1 | ✅ |
 | Reporte HTML (`jinja2`) | reporte autocontenido para adjuntar/portafolio | 1 | ✅ |
 | Reporte PDF (`reportlab`) | reporte profesional adjuntable (evidencia/auditoría) | 2 | ✅ |
+| Reporte de lote consolidado | un solo PDF con portada ejecutiva + un capítulo por archivo (`--pdf archivo.pdf` en modo lote) | 2 | ✅ |
 | Sanitizador PDF | elimina metadatos `/Info`, XMP, JavaScript / OpenAction | 1 | ✅ |
 | Tests + fixtures | `pytest` + generador de documentos maliciosos de prueba | 1 | ✅ |
 | Extractor **XLSX** | hojas `veryHidden`, filas/cols ocultas, fuente blanca, formato `;;;`, comentarios, metadatos | 2 | ✅ |
@@ -91,7 +92,10 @@ veilscan scan ./documentos/ -r
 # en lote, ver tambien la tabla completa de cada archivo
 veilscan scan ./documentos/ -r --details
 
-# en lote, generar un PDF por documento (nombrado segun el archivo de origen)
+# en lote, un solo PDF consolidado (portada + un capitulo por archivo)
+veilscan scan ./documentos/ -r --pdf reporte_lote.pdf
+
+# en lote, un PDF POR documento en vez de uno consolidado (apuntar a una carpeta)
 veilscan scan ./documentos/ -r --pdf ./reportes/
 
 # salida JSON (para integrar con otras tools)

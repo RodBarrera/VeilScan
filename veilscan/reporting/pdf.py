@@ -1,9 +1,24 @@
 """
 Reporte en PDF con reportlab (Fase 2).
 
-Genera un PDF profesional y autocontenido, pensado como evidencia adjuntable: un
-encabezado con el veredicto de riesgo, las estadisticas de extraccion y una tabla
-de hallazgos ordenados por gravedad. Maneja paginacion automatica.
+Genera reportes profesionales y autocontenidos, pensados como evidencia
+adjuntable: un encabezado con el veredicto de riesgo, las estadisticas de
+extraccion y una tabla de hallazgos ordenados por gravedad. Maneja paginacion
+automatica.
+
+Dos formas de generarlo:
+  - render(result, out_path)                 -> un PDF, un archivo.
+  - render_batch(results, summary, out_path) -> un solo PDF para TODO un lote:
+    portada con el resumen agregado (cuantos archivos por nivel de riesgo,
+    cuales son los mas riesgosos) y despues, un capitulo por archivo (salto de
+    pagina + el mismo detalle que generaria render() para ese archivo solo).
+
+    Por que importa: escanear una carpeta con --pdf antes generaba UN PDF POR
+    ARCHIVO. Para una auditoria de "reviso esta carpeta de 40 CVs", eso son 40
+    archivos sueltos que hay que adjuntar o comprimir a mano. Un solo PDF
+    consolidado es lo que de verdad se adjunta a un correo o se sube a un
+    ticket: una portada ejecutiva + el detalle de cada archivo, en orden,
+    dentro del mismo documento.
 
 Nota: reportlab NO incluye glifos para sub/superindices Unicode; por eso todo el
 texto usa caracteres ASCII normales.
@@ -20,6 +35,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import (
+    PageBreak,
     Paragraph,
     SimpleDocTemplate,
     Spacer,
@@ -43,12 +59,15 @@ _RISK_COLOR = {
     "MEDIUM": colors.HexColor("#f9a825"),
     "LOW": colors.HexColor("#0288d1"),
     "CLEAN": colors.HexColor("#2e7d32"),
+    "ERROR": colors.HexColor("#777777"),
 }
+_PAGE_CONTENT_WIDTH = 178 * mm  # A4 (210mm) menos 16mm de margen a cada lado
 
 
 def _styles():
     ss = getSampleStyleSheet()
     ss.add(ParagraphStyle("VTitle", parent=ss["Title"], fontSize=18, spaceAfter=2, alignment=TA_LEFT))
+    ss.add(ParagraphStyle("VFileTitle", parent=ss["Title"], fontSize=13, spaceAfter=1, alignment=TA_LEFT))
     ss.add(ParagraphStyle("VSub", parent=ss["Normal"], fontSize=9, textColor=colors.HexColor("#666666")))
     ss.add(ParagraphStyle("VCell", parent=ss["Normal"], fontSize=8, leading=10))
     ss.add(ParagraphStyle("VCellBold", parent=ss["Normal"], fontSize=8, leading=10, fontName="Helvetica-Bold"))
@@ -58,7 +77,7 @@ def _styles():
 
 
 def render(result: ScanResult, out_path: str) -> str:
-    """Escribe el reporte PDF y devuelve la ruta."""
+    """Escribe el reporte PDF de UN archivo y devuelve la ruta."""
     ss = _styles()
     doc = SimpleDocTemplate(
         out_path, pagesize=A4,
@@ -67,22 +86,146 @@ def render(result: ScanResult, out_path: str) -> str:
         title=f"VeilScan - {os.path.basename(result.path)}",
         author="VeilScan",
     )
+    story = [
+        Paragraph("VeilScan &mdash; Reporte de inyeccion oculta", ss["VTitle"]),
+        Paragraph("Generado: " + _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), ss["VSub"]),
+        Spacer(1, 10),
+    ]
+    story.extend(_result_story(result, ss, show_filename_heading=False))
+    story.append(_footer(ss))
+    doc.build(story)
+    return out_path
+
+
+def render_batch(results: list[ScanResult], summary, out_path: str) -> str:
+    """Escribe UN solo reporte PDF consolidado para un lote de archivos.
+
+    `summary` es el `BatchSummary` de `veilscan.core.batch.summarize()`.
+    """
+    ss = _styles()
+    doc = SimpleDocTemplate(
+        out_path, pagesize=A4,
+        leftMargin=16 * mm, rightMargin=16 * mm,
+        topMargin=16 * mm, bottomMargin=16 * mm,
+        title="VeilScan - Reporte de lote",
+        author="VeilScan",
+    )
     story = []
 
-    # --- Encabezado ---
-    story.append(Paragraph("VeilScan &mdash; Reporte de inyeccion oculta", ss["VTitle"]))
+    # --- Portada: resumen ejecutivo del lote completo ---
+    story.append(Paragraph("VeilScan &mdash; Reporte consolidado de lote", ss["VTitle"]))
+    story.append(Paragraph("Generado: " + _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), ss["VSub"]))
+    story.append(Paragraph(f"Archivos escaneados: {summary.total}", ss["VSub"]))
+    story.append(Spacer(1, 12))
+    story.extend(_batch_summary_block(summary, ss))
+    story.append(Spacer(1, 6))
+    story.append(_footer(ss))
+
+    # --- Un capitulo por archivo, con salto de pagina, en orden de escaneo ---
+    for result in results:
+        story.append(PageBreak())
+        story.extend(_result_story(result, ss, show_filename_heading=True))
+
+    doc.build(story)
+    return out_path
+
+
+def _batch_summary_block(summary, ss) -> list:
+    """Tabla de conteos por nivel + tabla de archivos riesgosos + errores, para la portada del lote."""
+    elems = []
+    order = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "CLEAN", "ERROR"]
+
+    # conteo por nivel de riesgo
+    present = [lbl for lbl in order if summary.by_label.get(lbl, 0)]
+    rows = [[Paragraph(h, ss["VCellBold"]) for h in ("Nivel", "Archivos")]]
+    for label in present:
+        rows.append([Paragraph(label, ss["VCellBold"]), Paragraph(str(summary.by_label[label]), ss["VCell"])])
+    count_tbl = Table(rows, colWidths=[45 * mm, 30 * mm])
+    style = [
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f2430")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cccccc")),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6), ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+    ]
+    for i, label in enumerate(present, 1):
+        style.append(("TEXTCOLOR", (0, i), (0, i), _RISK_COLOR.get(label, colors.black)))
+    count_tbl.setStyle(TableStyle(style))
+    elems.append(count_tbl)
+    elems.append(Spacer(1, 14))
+
+    # archivos con riesgo, ordenados de mas a menos grave (ya vienen asi en summary.risky)
+    if summary.risky:
+        elems.append(Paragraph("Archivos con riesgo", ss["VCellBold"]))
+        elems.append(Spacer(1, 4))
+        rrows = [[Paragraph(h, ss["VCellBold"]) for h in ("Riesgo", "Score", "Archivo")]]
+        for path, label, score in summary.risky:
+            rrows.append([
+                Paragraph(label, ss["VCellBold"]),
+                Paragraph(f"{score}/100", ss["VCell"]),
+                Paragraph(_esc(path), ss["VCell"]),
+            ])
+        rtable = Table(rrows, colWidths=[22 * mm, 18 * mm, _PAGE_CONTENT_WIDTH - 40 * mm], repeatRows=1)
+        rstyle = [
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cccccc")),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f2430")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("LEFTPADDING", (0, 0), (-1, -1), 4), ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+            ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ]
+        for i, (_path, label, _score) in enumerate(summary.risky, 1):
+            rstyle.append(("TEXTCOLOR", (0, i), (0, i), _RISK_COLOR.get(label, colors.black)))
+        rtable.setStyle(TableStyle(rstyle))
+        elems.append(rtable)
+        elems.append(Spacer(1, 14))
+    else:
+        elems.append(Paragraph("Ningun archivo presento hallazgos. Lote limpio.", ss["VCellBold"]))
+        elems.append(Spacer(1, 14))
+
+    # errores de extraccion, si hubo
+    if summary.errors:
+        elems.append(Paragraph("Errores", ss["VCellBold"]))
+        elems.append(Spacer(1, 4))
+        erows = [[Paragraph(h, ss["VCellBold"]) for h in ("Archivo", "Motivo")]]
+        for path, err in summary.errors:
+            erows.append([Paragraph(_esc(path), ss["VCell"]), Paragraph(_esc(err), ss["VCell"])])
+        etable = Table(erows, colWidths=[70 * mm, _PAGE_CONTENT_WIDTH - 70 * mm], repeatRows=1)
+        etable.setStyle(TableStyle([
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#cccccc")),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 4), ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+            ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ]))
+        elems.append(etable)
+
+    return elems
+
+
+def _result_story(result: ScanResult, ss, show_filename_heading: bool) -> list:
+    """Construye los flowables del detalle de UN archivo: banner de riesgo,
+    estadisticas, bloque del juez LLM y tabla de hallazgos.
+
+    Es el "capitulo" que tanto `render()` (un archivo, un PDF) como
+    `render_batch()` (muchos archivos, un PDF) reutilizan sin duplicar logica:
+    asi el detalle de un archivo se ve identico este solo o dentro de un lote.
+
+    `show_filename_heading` controla si se imprime el nombre del archivo como
+    titulo de seccion: en `render()` el titulo del documento ya lo dice, pero
+    en `render_batch()` cada capitulo necesita su propio encabezado.
+    """
+    story = []
+
+    if show_filename_heading:
+        story.append(Paragraph(_esc(os.path.basename(result.path)), ss["VFileTitle"]))
+        story.append(Spacer(1, 2))
     story.append(Paragraph(_esc(result.path), ss["VSub"]))
-    story.append(Paragraph(
-        "Generado: " + _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), ss["VSub"]))
     story.append(Spacer(1, 8))
 
-    # --- Caso error ---
     if result.error:
         story.append(_banner(f"ERROR: {_esc(result.error)}", colors.HexColor("#b00020"), ss))
-        doc.build(story)
-        return out_path
+        return story
 
-    # --- Banner de riesgo ---
     label = result.risk_label
     banner_text = f"RIESGO: {label}  &mdash;  {result.risk_score}/100"
     story.append(_banner(banner_text, _RISK_COLOR.get(label, colors.grey), ss))
@@ -95,17 +238,13 @@ def render(result: ScanResult, out_path: str) -> str:
     story.append(Paragraph(stats, ss["VSub"]))
     story.append(Spacer(1, 12))
 
-    # --- Bloque del juez LLM (si se solicito) ---
     if result.llm is not None:
         story.extend(_llm_block(result.llm, ss))
 
-    # --- Caso limpio ---
     if result.is_clean:
         story.append(Paragraph("Sin hallazgos. Documento limpio.", ss["VCellBold"]))
         story.append(Spacer(1, 6))
-        story.append(_footer(ss))
-        doc.build(story)
-        return out_path
+        return story
 
     # --- Tabla de hallazgos ---
     header = [Paragraph(h, ss["VCellBold"]) for h in
@@ -156,11 +295,8 @@ def render(result: ScanResult, out_path: str) -> str:
     story.append(Paragraph(
         "ATT&amp;CK: id sin marca = correspondencia directa &middot; id con ~ = mapeo analogo "
         "(sin equivalente exacto en ATT&amp;CK Enterprise)", ss["VSub"]))
-    story.append(Spacer(1, 10))
-    story.append(_footer(ss))
-
-    doc.build(story)
-    return out_path
+    story.append(Spacer(1, 6))
+    return story
 
 
 def _llm_block(a, ss) -> list:
@@ -189,7 +325,7 @@ def _llm_block(a, ss) -> list:
     if a.recommendation:
         inner.append(Paragraph(f"<b>Recomendacion:</b> {_esc(a.recommendation)}", ss["VCell"]))
 
-    head_tbl = Table([[head]], colWidths=[168 * mm])
+    head_tbl = Table([[head]], colWidths=[_PAGE_CONTENT_WIDTH])
     head_tbl.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), verdict_color),
         ("LEFTPADDING", (0, 0), (-1, -1), 8),
@@ -197,7 +333,7 @@ def _llm_block(a, ss) -> list:
     ]))
     elems.append(head_tbl)
     if inner:
-        body_tbl = Table([[inner]], colWidths=[168 * mm])
+        body_tbl = Table([[inner]], colWidths=[_PAGE_CONTENT_WIDTH])
         body_tbl.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f3f0fa")),
             ("BOX", (0, 0), (-1, -1), 0.5, verdict_color),
@@ -211,7 +347,7 @@ def _llm_block(a, ss) -> list:
 
 def _banner(text: str, color, ss) -> Table:
     p = Paragraph(f"<font color='white'><b>{text}</b></font>", ss["Normal"])
-    t = Table([[p]], colWidths=[168 * mm])
+    t = Table([[p]], colWidths=[_PAGE_CONTENT_WIDTH])
     t.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), color),
         ("LEFTPADDING", (0, 0), (-1, -1), 10),

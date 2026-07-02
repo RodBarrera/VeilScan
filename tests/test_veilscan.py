@@ -107,6 +107,77 @@ def test_pdf_report_generates(tmp_path):
         assert fh.read(5) == b"%PDF-"
 
 
+def test_pdf_batch_report_generates_single_consolidated_file(tmp_path):
+    """render_batch() debe producir UN solo PDF con portada + un capitulo por archivo."""
+    from veilscan.core import batch
+    from veilscan.reporting import pdf as pdf_report
+
+    files = [
+        os.path.join(FIX, "benign.pdf"),
+        os.path.join(FIX, "injected.pdf"),
+        os.path.join(FIX, "injected.xlsx"),
+    ]
+    results = [scanner.scan_file(f) for f in files]
+    summary = batch.summarize(results)
+
+    out = str(tmp_path / "lote_consolidado.pdf")
+    pdf_report.render_batch(results, summary, out)
+
+    assert os.path.isfile(out)
+    with open(out, "rb") as fh:
+        data = fh.read()
+    assert data[:5] == b"%PDF-"
+    # un solo archivo en disco, no uno por documento
+    assert len([p for p in tmp_path.iterdir() if p.suffix == ".pdf"]) == 1
+
+
+def test_cli_pdf_flag_with_directory_still_writes_one_file_per_document(tmp_path):
+    """--pdf apuntando a una CARPETA conserva el comportamiento anterior: un PDF por archivo."""
+    from typer.testing import CliRunner
+
+    from veilscan.cli import app
+
+    outdir = tmp_path / "reportes"
+    result = CliRunner().invoke(app, ["scan", os.path.join(FIX, "benign.pdf"),
+                                       os.path.join(FIX, "injected.pdf"),
+                                       "--pdf", str(outdir)])
+    assert result.exit_code == 0
+    pdfs = list(outdir.glob("*.pdf"))
+    assert len(pdfs) == 2
+
+
+def test_cli_pdf_directory_mode_does_not_collide_across_formats(tmp_path):
+    """Regresion: 'benign.pdf' y 'benign.docx' NO deben pisarse entre si al
+    escribir un PDF por archivo (el nombre de salida debe incluir la extension
+    original, no solo el stem)."""
+    from typer.testing import CliRunner
+
+    from veilscan.cli import app
+
+    outdir = tmp_path / "reportes"
+    result = CliRunner().invoke(app, ["scan", os.path.join(FIX, "benign.pdf"),
+                                       os.path.join(FIX, "benign.docx"),
+                                       os.path.join(FIX, "benign.xlsx"),
+                                       "--pdf", str(outdir)])
+    assert result.exit_code == 0
+    assert len(list(outdir.glob("*.pdf"))) == 3
+
+
+def test_cli_pdf_flag_with_filename_writes_one_consolidated_file(tmp_path):
+    """--pdf apuntando a un ARCHIVO .pdf con varios documentos genera UN consolidado."""
+    from typer.testing import CliRunner
+
+    from veilscan.cli import app
+
+    out = tmp_path / "consolidado.pdf"
+    result = CliRunner().invoke(app, ["scan", os.path.join(FIX, "benign.pdf"),
+                                       os.path.join(FIX, "injected.pdf"),
+                                       "--pdf", str(out)])
+    assert result.exit_code == 0
+    assert out.is_file()
+    assert len(list(tmp_path.glob("*.pdf"))) == 1
+
+
 # ----------------------- juez LLM ----------------------- #
 def test_llm_unavailable_without_key(monkeypatch):
     from veilscan.detectors import llm_judge

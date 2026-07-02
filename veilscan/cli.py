@@ -5,6 +5,7 @@ Ejemplos:
     veilscan scan documento.pdf
     veilscan scan *.docx --json
     veilscan scan cv.pdf --html reporte.html
+    veilscan scan ./carpeta/ -r --pdf reporte_lote.pdf   # 1 PDF consolidado para todo el lote
     veilscan scan untrusted.pdf --fail-on HIGH    # exit!=0 para pipelines CI
 """
 
@@ -34,7 +35,7 @@ def scan(
     details: bool = typer.Option(False, "--details", help="En lote, muestra tambien la tabla completa de cada archivo."),
     json_out: bool = typer.Option(False, "--json", help="Salida en JSON en vez de tabla."),
     html_out: str = typer.Option(None, "--html", help="Escribe un reporte HTML en la ruta dada."),
-    pdf_out: str = typer.Option(None, "--pdf", help="Escribe un reporte PDF en la ruta dada."),
+    pdf_out: str = typer.Option(None, "--pdf", help="Ruta .pdf -> un reporte consolidado del lote. Ruta de carpeta -> un PDF por archivo."),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Solo muestra archivos con hallazgos."),
     use_llm: bool = typer.Option(False, "--llm", help="Activa el juez LLM (explica el texto oculto). Requiere ANTHROPIC_API_KEY."),
     llm_model: str = typer.Option(None, "--llm-model", help="Modelo a usar para el juez (default: claude-haiku-4-5)."),
@@ -77,19 +78,31 @@ def scan(
 
     if pdf_out:
         from veilscan.reporting import pdf as pdf_report
+        import os as _os
+
         if len(results) == 1:
             pdf_report.render(results[0], pdf_out)
             console.print(f"[green]Reporte PDF escrito en {pdf_out}[/green]")
-        else:
-            # un PDF por archivo, nombrado segun el documento de origen
-            import os as _os
-            outdir = pdf_out if _os.path.isdir(pdf_out) or not pdf_out.lower().endswith(".pdf") else _os.path.dirname(pdf_out) or "."
+        elif _os.path.isdir(pdf_out) or not pdf_out.lower().endswith(".pdf"):
+            # --pdf apunta a una CARPETA: un PDF por archivo, nombrado segun el
+            # documento de origen (util para adjuntar/archivar cada uno por separado).
+            outdir = pdf_out
             _os.makedirs(outdir, exist_ok=True)
             for r in results:
-                stem = _os.path.splitext(_os.path.basename(r.path))[0]
+                base = _os.path.basename(r.path)
+                # se incluye la extension original en el nombre de salida: sin esto,
+                # "benign.pdf" y "benign.docx" en la misma carpeta generarian el
+                # mismo archivo de salida y uno pisaria al otro.
+                stem = base.replace(".", "_")
                 path_i = _os.path.join(outdir, f"{stem}_veilscan.pdf")
                 pdf_report.render(r, path_i)
             console.print(f"[green]{len(results)} reportes PDF escritos en {outdir}/[/green]")
+        else:
+            # --pdf apunta a un ARCHIVO .pdf concreto: un unico reporte
+            # consolidado (portada con el resumen del lote + un capitulo por
+            # archivo), pensado para adjuntar como UN documento de evidencia.
+            pdf_report.render_batch(results, batch.summarize(results), pdf_out)
+            console.print(f"[green]Reporte PDF consolidado ({len(results)} archivos) escrito en {pdf_out}[/green]")
 
     # codigo de salida para CI (peor archivo del lote)
     if fail_on:
